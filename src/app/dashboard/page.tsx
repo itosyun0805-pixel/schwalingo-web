@@ -1,201 +1,223 @@
-import { createClient } from '@/lib/supabase/server'
-import { redirect } from 'next/navigation'
-import Link from 'next/link'
-import LogoutButton from '@/components/LogoutButton'
+'use client'
 
-const SKILL_USECASES: Record<string, { scene: string; icon: string; tag: string }[]> = {
-  英語: [
-    { scene: 'インバウンド観光客への案内・通訳', icon: '🗺️', tag: 'ガイド' },
-    { scene: 'オンライン英会話講師', icon: '💻', tag: '講師' },
-    { scene: '多言語コンテンツ制作', icon: '✍️', tag: 'ライター' },
-    { scene: 'インバウンド対応スタッフ', icon: '🏨', tag: '接客' },
-  ],
-  中国語: [
-    { scene: '中国人観光客向けガイド', icon: '🧭', tag: 'ガイド' },
-    { scene: '貿易・ECサイトのサポート', icon: '📦', tag: 'ビジネス' },
-    { scene: '中国語コンテンツ翻訳', icon: '📝', tag: 'ライター' },
-  ],
-  韓国語: [
-    { scene: 'K-POP・韓国文化イベントのサポート', icon: '🎤', tag: 'イベント' },
-    { scene: '韓国語レッスン講師', icon: '📚', tag: '講師' },
-    { scene: 'SNS多言語発信', icon: '📱', tag: 'SNS' },
-  ],
-  スペイン語: [
-    { scene: '中南米向けビジネス通訳', icon: '💼', tag: 'ビジネス' },
-    { scene: 'スペイン語コンテンツ制作', icon: '✍️', tag: 'ライター' },
-    { scene: '語学スクールの講師補助', icon: '🏫', tag: '講師' },
-  ],
-  フランス語: [
-    { scene: 'フランス語圏観光客のガイド', icon: '🗼', tag: 'ガイド' },
-    { scene: 'フランス語レッスン', icon: '📖', tag: '講師' },
-    { scene: 'ファッション・アート分野の通訳', icon: '🎨', tag: '通訳' },
-  ],
-  ドイツ語: [
-    { scene: 'ドイツ語圏ビジネス通訳', icon: '🏭', tag: 'ビジネス' },
-    { scene: 'ドイツ語レッスン', icon: '📖', tag: '講師' },
-  ],
-  ポルトガル語: [
-    { scene: 'ブラジル向けビジネスサポート', icon: '🌎', tag: 'ビジネス' },
-    { scene: 'ポルトガル語コンテンツ制作', icon: '✍️', tag: 'ライター' },
-  ],
-  イタリア語: [
-    { scene: 'イタリア観光客ガイド', icon: '🇮🇹', tag: 'ガイド' },
-    { scene: 'イタリア語レッスン', icon: '📖', tag: '講師' },
-  ],
-  タイ語: [
-    { scene: 'タイ人観光客向けガイド', icon: '🧭', tag: 'ガイド' },
-    { scene: 'タイ語翻訳・通訳', icon: '📝', tag: '通訳' },
-  ],
-  ベトナム語: [
-    { scene: 'ベトナム人労働者向けサポート', icon: '🤝', tag: '支援' },
-    { scene: 'ベトナム語コンテンツ制作', icon: '✍️', tag: 'ライター' },
-  ],
-  インドネシア語: [
-    { scene: 'インドネシア向けビジネスサポート', icon: '💼', tag: 'ビジネス' },
-    { scene: 'インドネシア語レッスン', icon: '📖', tag: '講師' },
-  ],
-  アラビア語: [
-    { scene: 'アラビア語圏観光客ガイド', icon: '🕌', tag: 'ガイド' },
-    { scene: 'アラビア語翻訳', icon: '📝', tag: '通訳' },
-  ],
-  日本語教育: [
-    { scene: '外国人向け日本語講師', icon: '🎌', tag: '講師' },
-    { scene: '日本語学習アプリのコンテンツ制作', icon: '📱', tag: 'コンテンツ' },
-    { scene: '外国人労働者への日本語サポート', icon: '🤝', tag: '支援' },
-  ],
+import { useState, useEffect } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { useRouter } from 'next/navigation'
+
+type Profile = { name: string | null; avatar_url: string | null }
+type Comment = { id: string; content: string; created_at: string; user_id: string; profiles: Profile | null }
+type Post = {
+  id: string; user_id: string; content: string; image_urls: string[]; created_at: string
+  profiles: Profile | null
+  post_likes: { user_id: string }[]
+  post_comments: Comment[]
 }
 
-const LEVEL_LABEL: Record<string, string> = {
-  beginner: '初級',
-  intermediate: '中級',
-  advanced: '上級',
-  native: 'ネイティブ',
+const avatarColor = (uid: string) => {
+  const colors = ['bg-green-400', 'bg-blue-400', 'bg-purple-400', 'bg-yellow-400', 'bg-pink-400', 'bg-teal-400']
+  return colors[uid.charCodeAt(0) % colors.length]
 }
 
-const LEVEL_COLOR: Record<string, string> = {
-  beginner: 'bg-gray-100 text-gray-500',
-  intermediate: 'bg-blue-50 text-blue-600',
-  advanced: 'bg-green-50 text-green-600',
-  native: 'bg-[#3D7A6E]/10 text-[#3D7A6E]',
+const timeAgo = (ts: string) => {
+  const diff = Date.now() - new Date(ts).getTime()
+  const m = Math.floor(diff / 60000)
+  if (m < 1) return 'たった今'
+  if (m < 60) return `${m}分前`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}時間前`
+  const d = Math.floor(h / 24)
+  if (d < 7) return `${d}日前`
+  const dt = new Date(ts)
+  return `${dt.getMonth() + 1}/${dt.getDate()}`
 }
 
-export default async function DashboardPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/auth/login')
+export default function HomePage() {
+  const [posts, setPosts] = useState<Post[]>([])
+  const [userId, setUserId] = useState<string | null>(null)
+  const [userName, setUserName] = useState<string | null>(null)
+  const [content, setContent] = useState('')
+  const [posting, setPosting] = useState(false)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [commentTexts, setCommentTexts] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const supabase = createClient()
+  const router = useRouter()
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
+  useEffect(() => {
+    const init = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { router.push('/auth/login'); return }
+      setUserId(user.id)
+      const { data: p } = await supabase.from('profiles').select('name').eq('id', user.id).single()
+      setUserName(p?.name || null)
+      await loadPosts()
+      setLoading(false)
+    }
+    init()
+  }, [])
 
-  const { data: userSkills } = await supabase
-    .from('user_skills')
-    .select('*')
-    .eq('user_id', user.id)
+  const loadPosts = async () => {
+    const { data } = await supabase
+      .from('posts')
+      .select('id, content, image_urls, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
+      .order('created_at', { ascending: false })
+      .limit(30)
+    if (data) setPosts(data as any)
+  }
 
-  const hasProfile = profile?.name
-  const skills = userSkills || []
+  const createPost = async () => {
+    if (!content.trim() || !userId || posting) return
+    setPosting(true)
+    const { data } = await supabase
+      .from('posts')
+      .insert({ user_id: userId, content: content.trim() })
+      .select('id, content, image_urls, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
+      .single()
+    if (data) setPosts(prev => [data as any, ...prev])
+    setContent('')
+    setPosting(false)
+  }
+
+  const toggleLike = async (post: Post) => {
+    if (!userId) return
+    const liked = post.post_likes.some(l => l.user_id === userId)
+    if (liked) {
+      await supabase.from('post_likes').delete().eq('post_id', post.id).eq('user_id', userId)
+      setPosts(prev => prev.map(p => p.id === post.id ? { ...p, post_likes: p.post_likes.filter(l => l.user_id !== userId) } : p))
+    } else {
+      await supabase.from('post_likes').insert({ post_id: post.id, user_id: userId })
+      setPosts(prev => prev.map(p => p.id === post.id ? { ...p, post_likes: [...p.post_likes, { user_id: userId! }] } : p))
+    }
+  }
+
+  const addComment = async (postId: string) => {
+    const text = commentTexts[postId]?.trim()
+    if (!text || !userId) return
+    const { data } = await supabase
+      .from('post_comments')
+      .insert({ post_id: postId, user_id: userId, content: text })
+      .select('id, content, created_at, user_id, profiles(name, avatar_url)')
+      .single()
+    if (data) {
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, post_comments: [...p.post_comments, data as any] } : p))
+      setCommentTexts(prev => ({ ...prev, [postId]: '' }))
+    }
+  }
+
+  const toggleExpand = (id: string) =>
+    setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  if (loading) return <div className="flex items-center justify-center h-64"><p className="text-gray-400 text-sm">読み込み中...</p></div>
 
   return (
-    <div className="min-h-screen bg-[#FAFAF8]">
-      <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-black text-[#3D7A6E]">SchwaLingo</h1>
-        <div className="flex items-center gap-4">
-          <Link href="/profile" className="text-sm text-[#3D7A6E] font-semibold hover:underline">
-            プロフィール編集
-          </Link>
-          <LogoutButton />
+    <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+      {/* Create Post */}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+        <div className="flex gap-3">
+          {userId && (
+            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0 ${avatarColor(userId)}`}>
+              {(userName || 'U')[0].toUpperCase()}
+            </div>
+          )}
+          <textarea
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) createPost() }}
+            placeholder="学習の進捗や気づきをシェアしよう..."
+            rows={3}
+            className="flex-1 text-sm text-gray-800 placeholder-gray-400 resize-none outline-none leading-relaxed"
+          />
         </div>
-      </header>
+        <div className="flex items-center justify-end pt-3 border-t border-gray-50 mt-3">
+          <button onClick={createPost} disabled={!content.trim() || posting}
+            className="px-5 py-2 bg-[#16A34A] text-white rounded-xl text-sm font-bold hover:bg-[#166534] disabled:opacity-40 transition-colors">
+            {posting ? '投稿中...' : '投稿する'}
+          </button>
+        </div>
+      </div>
 
-      <main className="max-w-4xl mx-auto px-6 py-10 space-y-8">
+      {/* Feed */}
+      {posts.length === 0 ? (
+        <div className="text-center py-16 text-gray-400">
+          <p className="text-4xl mb-3">✍️</p>
+          <p className="text-sm">まだ投稿がありません。最初の投稿をしてみましょう！</p>
+        </div>
+      ) : posts.map(post => {
+        const name = post.profiles?.name || 'ユーザー'
+        const liked = post.post_likes.some(l => l.user_id === userId)
+        const open = expanded.has(post.id)
 
-        {/* プロフィール未設定バナー */}
-        {!hasProfile && (
-          <Link href="/profile" className="block bg-[#E8845A]/10 border border-[#E8845A]/30 rounded-2xl p-5 hover:bg-[#E8845A]/15 transition-colors">
-            <div className="flex items-center gap-4">
-              <span className="text-3xl">👋</span>
-              <div>
-                <p className="font-bold text-[#E8845A]">プロフィールを設定しましょう</p>
-                <p className="text-sm text-gray-500 mt-0.5">語学スキルを登録すると、あなたに合った活かし方が表示されます →</p>
+        return (
+          <div key={post.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm">
+            <div className="p-5">
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-4">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0 ${avatarColor(post.user_id)}`}>
+                  {name[0].toUpperCase()}
+                </div>
+                <div>
+                  <p className="font-bold text-gray-800 text-sm leading-none">{name}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">{timeAgo(post.created_at)}</p>
+                </div>
+              </div>
+
+              {/* Content */}
+              <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{post.content}</p>
+
+              {/* Actions */}
+              <div className="flex items-center gap-5 pt-4 mt-4 border-t border-gray-50">
+                <button onClick={() => toggleLike(post)}
+                  className={`flex items-center gap-1.5 text-sm font-semibold transition-colors ${liked ? 'text-[#16A34A]' : 'text-gray-400 hover:text-[#16A34A]'}`}>
+                  <span className="text-base">{liked ? '❤️' : '🤍'}</span>
+                  <span>{post.post_likes.length}</span>
+                </button>
+                <button onClick={() => toggleExpand(post.id)}
+                  className="flex items-center gap-1.5 text-sm font-semibold text-gray-400 hover:text-gray-600 transition-colors">
+                  <span className="text-base">💬</span>
+                  <span>{post.post_comments.length}</span>
+                </button>
               </div>
             </div>
-          </Link>
-        )}
 
-        {/* ウェルカム */}
-        <div>
-          <h2 className="text-2xl font-black text-gray-800 mb-1">
-            {hasProfile ? `${profile.name}さんのスキルで、できること` : 'あなたのスキルで、できること'}
-          </h2>
-          <p className="text-gray-400 text-sm">
-            {skills.length > 0
-              ? `${skills.length}つの語学スキルが登録されています`
-              : '語学スキルを登録すると、活かし方が具体的にわかります'}
-          </p>
-        </div>
-
-        {/* スキル別ユースケース */}
-        {skills.length > 0 ? (
-          <div className="space-y-4">
-            {skills.map((skill: any) => {
-              const usecases = SKILL_USECASES[skill.language] || []
-              return (
-                <div key={skill.id} className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-                  <div className="px-6 py-4 flex items-center justify-between border-b border-gray-50">
-                    <h3 className="font-black text-gray-800 text-lg">{skill.language}</h3>
-                    <span className={`text-xs font-bold px-3 py-1 rounded-full ${LEVEL_COLOR[skill.level]}`}>
-                      {LEVEL_LABEL[skill.level]}
-                    </span>
+            {/* Comments */}
+            {open && (
+              <div className="border-t border-gray-50 px-5 py-4 bg-gray-50/50 rounded-b-2xl space-y-3">
+                {post.post_comments.map(c => (
+                  <div key={c.id} className="flex gap-2.5">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${avatarColor(c.user_id)}`}>
+                      {(c.profiles?.name || 'U')[0].toUpperCase()}
+                    </div>
+                    <div className="flex-1 bg-white rounded-xl px-3 py-2 border border-gray-100">
+                      <p className="text-xs font-bold text-gray-700">{c.profiles?.name || 'ユーザー'}</p>
+                      <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">{c.content}</p>
+                    </div>
                   </div>
-                  <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {usecases.map((u, i) => (
-                      <div key={i} className="flex items-start gap-3 p-3 bg-[#FAFAF8] rounded-xl">
-                        <span className="text-2xl">{u.icon}</span>
-                        <div>
-                          <span className="text-[10px] font-bold text-[#3D7A6E] bg-[#3D7A6E]/10 px-2 py-0.5 rounded-full">
-                            {u.tag}
-                          </span>
-                          <p className="text-sm text-gray-700 font-medium mt-1 leading-snug">{u.scene}</p>
-                        </div>
-                      </div>
-                    ))}
+                ))}
+                <div className="flex gap-2.5">
+                  {userId && (
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${avatarColor(userId)}`}>
+                      {(userName || 'U')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex-1 flex gap-2">
+                    <input
+                      value={commentTexts[post.id] || ''}
+                      onChange={e => setCommentTexts(prev => ({ ...prev, [post.id]: e.target.value }))}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addComment(post.id) } }}
+                      placeholder="コメントを追加..."
+                      className="flex-1 bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-[#16A34A] transition-colors"
+                    />
+                    <button onClick={() => addComment(post.id)} disabled={!commentTexts[post.id]?.trim()}
+                      className="px-3 py-1.5 bg-[#16A34A] text-white rounded-xl text-xs font-bold hover:bg-[#166534] disabled:opacity-40 transition-colors">
+                      送信
+                    </button>
                   </div>
                 </div>
-              )
-            })}
-          </div>
-        ) : (
-          /* スキル未登録時はデモ表示 */
-          <div className="space-y-4 opacity-50 pointer-events-none">
-            <div className="bg-white rounded-2xl border border-gray-100 p-6">
-              <div className="h-4 bg-gray-100 rounded w-24 mb-4" />
-              <div className="grid grid-cols-2 gap-3">
-                {[1,2,3,4].map(i => <div key={i} className="h-16 bg-gray-50 rounded-xl" />)}
               </div>
-            </div>
+            )}
           </div>
-        )}
-
-        {/* フラッシュカードへのリンク（準備中） */}
-        <div className="bg-gradient-to-r from-[#3D7A6E] to-[#5AA898] rounded-2xl p-6 text-white">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-black text-lg">フラッシュカードで学ぶ</p>
-              <p className="text-sm opacity-80 mt-1">単語・フレーズを自分だけのカードで覚える</p>
-            </div>
-            <Link
-              href="/flashcards"
-              className="bg-white text-[#3D7A6E] font-bold px-5 py-2 rounded-full text-sm hover:bg-gray-50 transition-colors whitespace-nowrap"
-            >
-              開く →
-            </Link>
-          </div>
-        </div>
-
-      </main>
+        )
+      })}
     </div>
   )
 }

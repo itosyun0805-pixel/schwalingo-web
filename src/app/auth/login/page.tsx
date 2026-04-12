@@ -17,9 +17,7 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
-
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-
     if (error) {
       setError('メールアドレスまたはパスワードが正しくありません')
     } else {
@@ -30,63 +28,47 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAF8] flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-2xl font-black text-[#3D7A6E]">SchwaLingo</h1>
-          <p className="text-gray-500 mt-2 text-sm">自分らしく、社会とつながる場所</p>
+    <div className="min-h-screen flex">
+      <div className="hidden lg:flex w-5/12 bg-[#1E3A2A] flex-col items-center justify-center p-12 relative overflow-hidden">
+        <div className="absolute top-[-80px] right-[-80px] w-64 h-64 rounded-full bg-[#16A34A]/20 blur-3xl" />
+        <div className="absolute bottom-[-80px] left-[-80px] w-64 h-64 rounded-full bg-[#16A34A]/10 blur-3xl" />
+        <div className="relative z-10 text-center">
+          <div className="text-white font-black text-3xl mb-3">SchwaLingo</div>
+          <p className="text-white/50 text-sm leading-relaxed">あなたの語学スキルで、<br />社会とつながる。</p>
         </div>
+      </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 p-8 shadow-sm">
-          <h2 className="text-xl font-bold mb-6">ログイン</h2>
+      <div className="flex-1 bg-[#F7FDF9] flex items-center justify-center px-6">
+        <div className="w-full max-w-sm">
+          <div className="lg:hidden text-center mb-8">
+            <div className="text-2xl font-black text-[#16A34A]">SchwaLingo</div>
+          </div>
+          <h2 className="text-2xl font-black text-gray-900 mb-1">おかえりなさい</h2>
+          <p className="text-gray-400 text-sm mb-8">アカウントにログイン</p>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                メールアドレス
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#3D7A6E] focus:border-transparent text-sm"
-                placeholder="you@example.com"
-              />
+              <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">メールアドレス</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#16A34A] focus:border-transparent text-sm bg-white"
+                placeholder="you@example.com" />
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                パスワード
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#3D7A6E] focus:border-transparent text-sm"
-                placeholder="パスワード"
-              />
+              <label className="block text-xs font-bold text-gray-600 mb-1.5 uppercase tracking-wide">パスワード</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#16A34A] focus:border-transparent text-sm bg-white"
+                placeholder="パスワード" />
             </div>
-
-            {error && (
-              <p className="text-sm bg-red-50 text-red-600 p-3 rounded-lg">{error}</p>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 bg-[#3D7A6E] text-white rounded-xl font-bold text-sm hover:bg-[#5AA898] transition-colors disabled:opacity-50"
-            >
+            {error && <div className="bg-red-50 border border-red-100 text-red-600 text-sm p-3 rounded-xl">{error}</div>}
+            <button type="submit" disabled={loading}
+              className="w-full py-3 bg-[#16A34A] text-white rounded-xl font-bold text-sm hover:bg-[#166534] transition-colors disabled:opacity-50 shadow-lg shadow-green-500/20">
               {loading ? 'ログイン中...' : 'ログイン'}
             </button>
           </form>
 
-          <p className="text-center text-sm text-gray-500 mt-6">
+          <p className="text-center text-sm text-gray-400 mt-6">
             アカウントをお持ちでない方は{' '}
-            <Link href="/auth/signup" className="text-[#3D7A6E] font-semibold hover:underline">
-              新規登録
-            </Link>
+            <Link href="/auth/signup" className="text-[#16A34A] font-bold hover:underline">新規登録</Link>
           </p>
         </div>
       </div>
