@@ -1,26 +1,33 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 
-type Card = { id: string; front: string; back: string; mastery: number; next_review: string | null; interval_days: number; ease_factor: number }
+type Card = { id: string; front: string; back: string; mastery: number; next_review: string | null; interval_days: number; ease_factor: number; front_image_url: string | null; back_image_url: string | null }
 type Deck = { id: string; title: string; language: string }
 
 export default function DeckPage() {
   const { deckId } = useParams<{ deckId: string }>()
   const [deck, setDeck] = useState<Deck | null>(null)
   const [cards, setCards] = useState<Card[]>([])
+  const [userId, setUserId] = useState<string | null>(null)
   const [mode, setMode] = useState<'list' | 'study'>('list')
   const [queue, setQueue] = useState<Card[]>([])
   const [idx, setIdx] = useState(0)
   const [flipped, setFlipped] = useState(false)
   const [front, setFront] = useState('')
   const [back, setBack] = useState('')
+  const [frontImageFile, setFrontImageFile] = useState<File | null>(null)
+  const [backImageFile, setBackImageFile] = useState<File | null>(null)
+  const [frontImagePreview, setFrontImagePreview] = useState<string | null>(null)
+  const [backImagePreview, setBackImagePreview] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(true)
   const [studyDone, setStudyDone] = useState(false)
+  const frontImgRef = useRef<HTMLInputElement>(null)
+  const backImgRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
 
@@ -28,6 +35,7 @@ export default function DeckPage() {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/auth/login'); return }
+      setUserId(user.id)
       const { data: d } = await supabase.from('flashcard_decks').select('*').eq('id', deckId).single()
       if (!d) { router.push('/dashboard/flashcards'); return }
       setDeck(d)
@@ -79,14 +87,32 @@ export default function DeckPage() {
     }
   }
 
+  const uploadCardImage = async (file: File, side: 'front' | 'back') => {
+    if (!userId) return null
+    const ext = file.name.split('.').pop()
+    const path = `${userId}/${deckId}/${side}-${Date.now()}.${ext}`
+    const { error } = await supabase.storage.from('flashcard-images').upload(path, file)
+    if (error) return null
+    const { data: { publicUrl } } = supabase.storage.from('flashcard-images').getPublicUrl(path)
+    return publicUrl
+  }
+
   const addCard = async () => {
     if (!front.trim() || !back.trim()) return
     setAdding(true)
+    const [frontUrl, backUrl] = await Promise.all([
+      frontImageFile ? uploadCardImage(frontImageFile, 'front') : Promise.resolve(null),
+      backImageFile ? uploadCardImage(backImageFile, 'back') : Promise.resolve(null),
+    ])
     const { data } = await supabase.from('flashcards')
-      .insert({ deck_id: deckId, front: front.trim(), back: back.trim() })
+      .insert({ deck_id: deckId, front: front.trim(), back: back.trim(), front_image_url: frontUrl, back_image_url: backUrl })
       .select().single()
     if (data) setCards(prev => [...prev, data])
     setFront(''); setBack('')
+    setFrontImageFile(null); setBackImageFile(null)
+    setFrontImagePreview(null); setBackImagePreview(null)
+    if (frontImgRef.current) frontImgRef.current.value = ''
+    if (backImgRef.current) backImgRef.current.value = ''
     setAdding(false)
   }
 
@@ -131,16 +157,18 @@ export default function DeckPage() {
 
         {/* Card */}
         <div onClick={() => setFlipped(f => !f)}
-          className="bg-white rounded-2xl border border-gray-100 shadow-sm p-10 min-h-[240px] flex flex-col items-center justify-center cursor-pointer hover:shadow-md transition-all text-center select-none">
+          className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 min-h-[240px] flex flex-col items-center justify-center cursor-pointer hover:shadow-md transition-all text-center select-none">
           {!flipped ? (
             <>
               <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-5">表</p>
+              {card.front_image_url && <img src={card.front_image_url} alt="front" className="max-h-32 rounded-xl object-contain mb-4" />}
               <p className="text-3xl font-black text-gray-900 leading-tight">{card.front}</p>
               <p className="text-xs text-gray-400 mt-6">タップして答えを確認 →</p>
             </>
           ) : (
             <>
               <p className="text-[10px] font-black text-[#16A34A] uppercase tracking-widest mb-5">裏</p>
+              {card.back_image_url && <img src={card.back_image_url} alt="back" className="max-h-32 rounded-xl object-contain mb-4" />}
               <p className="text-3xl font-black text-gray-900 leading-tight">{card.back}</p>
             </>
           )}
@@ -182,13 +210,43 @@ export default function DeckPage() {
       <div className="bg-white rounded-xl border border-gray-100 p-5 mb-5 shadow-sm">
         <h3 className="font-bold text-gray-700 text-sm mb-3">カードを追加</h3>
         <div className="grid grid-cols-2 gap-3 mb-3">
-          <input value={front} onChange={e => setFront(e.target.value)}
-            placeholder="表（単語・フレーズ）"
-            className="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#16A34A]" />
-          <input value={back} onChange={e => setBack(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && addCard()}
-            placeholder="裏（意味・訳）"
-            className="px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#16A34A]" />
+          <div className="space-y-2">
+            <input value={front} onChange={e => setFront(e.target.value)}
+              placeholder="表（単語・フレーズ）"
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#16A34A]" />
+            <input ref={frontImgRef} type="file" accept="image/*" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) { setFrontImageFile(f); setFrontImagePreview(URL.createObjectURL(f)) } }} />
+            <button onClick={() => frontImgRef.current?.click()}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-[#16A34A] transition-colors">
+              🖼️ 表に画像を追加
+            </button>
+            {frontImagePreview && (
+              <div className="relative w-16 h-16">
+                <img src={frontImagePreview} alt="front preview" className="w-16 h-16 object-cover rounded-lg" />
+                <button onClick={() => { setFrontImageFile(null); setFrontImagePreview(null); if (frontImgRef.current) frontImgRef.current.value = '' }}
+                  className="absolute -top-1 -right-1 w-4 h-4 bg-gray-600 text-white rounded-full flex items-center justify-center text-[9px]">✕</button>
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <input value={back} onChange={e => setBack(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addCard()}
+              placeholder="裏（意味・訳）"
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#16A34A]" />
+            <input ref={backImgRef} type="file" accept="image/*" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) { setBackImageFile(f); setBackImagePreview(URL.createObjectURL(f)) } }} />
+            <button onClick={() => backImgRef.current?.click()}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-[#16A34A] transition-colors">
+              🖼️ 裏に画像を追加
+            </button>
+            {backImagePreview && (
+              <div className="relative w-16 h-16">
+                <img src={backImagePreview} alt="back preview" className="w-16 h-16 object-cover rounded-lg" />
+                <button onClick={() => { setBackImageFile(null); setBackImagePreview(null); if (backImgRef.current) backImgRef.current.value = '' }}
+                  className="absolute -top-1 -right-1 w-4 h-4 bg-gray-600 text-white rounded-full flex items-center justify-center text-[9px]">✕</button>
+              </div>
+            )}
+          </div>
         </div>
         <button onClick={addCard} disabled={!front.trim() || !back.trim() || adding}
           className="px-5 py-2 bg-[#16A34A] text-white rounded-xl text-sm font-bold hover:bg-[#166534] disabled:opacity-50 transition-colors">
@@ -207,8 +265,14 @@ export default function DeckPage() {
           {cards.map(card => (
             <div key={card.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-4 hover:border-gray-200 transition-colors">
               <div className="flex-1 grid grid-cols-2 gap-4 min-w-0">
-                <p className="text-sm font-semibold text-gray-800 truncate">{card.front}</p>
-                <p className="text-sm text-gray-500 truncate">{card.back}</p>
+                <div className="flex items-center gap-2 min-w-0">
+                  {card.front_image_url && <img src={card.front_image_url} alt="front" className="w-8 h-8 rounded object-cover shrink-0" />}
+                  <p className="text-sm font-semibold text-gray-800 truncate">{card.front}</p>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  {card.back_image_url && <img src={card.back_image_url} alt="back" className="w-8 h-8 rounded object-cover shrink-0" />}
+                  <p className="text-sm text-gray-500 truncate">{card.back}</p>
+                </div>
               </div>
               <span className={`text-[11px] font-bold shrink-0 ${masteryColor(card.mastery)}`}>
                 {masteryLabel(card.mastery)}

@@ -12,13 +12,19 @@ export default function Sidebar() {
   const pathname = usePathname()
   const [channels, setChannels] = useState<Channel[]>([])
   const [isAdmin, setIsAdmin] = useState(false)
+  const [unreadNotifs, setUnreadNotifs] = useState(0)
+  const [dmRequests, setDmRequests] = useState(0)
+  const [userId, setUserId] = useState<string | null>(null)
   const supabase = createClient()
 
   useEffect(() => {
     let rt: any
+    let notifRt: any
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      setUserId(user.id)
+
       const { data: p } = await supabase.from('profiles').select('is_admin').eq('id', user.id).single()
       if (p?.is_admin) setIsAdmin(true)
 
@@ -28,14 +34,53 @@ export default function Sidebar() {
       }
       await load()
 
+      // Unread notifications count
+      const loadNotifs = async () => {
+        const { count } = await supabase
+          .from('notifications')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .eq('read', false)
+        setUnreadNotifs(count || 0)
+      }
+      await loadNotifs()
+
+      // Pending DM requests count
+      const loadDmReqs = async () => {
+        const { count } = await supabase
+          .from('dm_requests')
+          .select('*', { count: 'exact', head: true })
+          .eq('to_user_id', user.id)
+          .eq('status', 'pending')
+        setDmRequests(count || 0)
+      }
+      await loadDmReqs()
+
       rt = supabase
         .channel('sidebar-channels')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'channels' }, load)
         .subscribe()
+
+      notifRt = supabase
+        .channel('sidebar-notifs')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+          () => { setUnreadNotifs(prev => prev + 1) })
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_requests', filter: `to_user_id=eq.${user.id}` },
+          () => { setDmRequests(prev => prev + 1) })
+        .subscribe()
     }
     init()
-    return () => { if (rt) supabase.removeChannel(rt) }
+    return () => {
+      if (rt) supabase.removeChannel(rt)
+      if (notifRt) supabase.removeChannel(notifRt)
+    }
   }, [])
+
+  // Reset notification count when navigating to notifications page
+  useEffect(() => {
+    if (pathname === '/dashboard/notifications') setUnreadNotifs(0)
+    if (pathname === '/dashboard/messages') setDmRequests(0)
+  }, [pathname])
 
   const active = (href: string, exact = false) => {
     if (exact) return pathname === href
@@ -44,10 +89,17 @@ export default function Sidebar() {
     return pathname.startsWith(href) && !pathname.startsWith('/dashboard/chat')
   }
 
-  const nl = (href: string, label: string, exact = false) => (
-    <Link href={href} className={`block px-3 py-1.5 rounded text-sm transition-colors ${
+  const nl = (href: string, label: string, exact = false, badge?: number) => (
+    <Link href={href} className={`flex items-center justify-between px-3 py-1.5 rounded text-sm transition-colors ${
       active(href, exact) ? 'bg-white/20 text-white font-semibold' : 'text-white/60 hover:text-white hover:bg-white/10'
-    }`}>{label}</Link>
+    }`}>
+      <span>{label}</span>
+      {badge && badge > 0 ? (
+        <span className="w-5 h-5 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center shrink-0">
+          {badge > 9 ? '9+' : badge}
+        </span>
+      ) : null}
+    </Link>
   )
 
   return (
@@ -60,6 +112,8 @@ export default function Sidebar() {
       <div className="flex-1 overflow-y-auto py-2">
         <div className="px-2 mb-3 space-y-0.5">
           {nl('/dashboard', 'ホーム', true)}
+          {nl('/dashboard/notifications', '🔔 通知', false, unreadNotifs)}
+          {nl('/dashboard/messages', '💬 メッセージ', false, dmRequests)}
           {nl('/dashboard/flashcards', 'フラッシュカード')}
           {nl('/dashboard/videos', '動画学習')}
           {nl('/dashboard/events', 'イベント')}

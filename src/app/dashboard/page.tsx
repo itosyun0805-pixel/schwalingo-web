@@ -8,6 +8,7 @@ type Profile = { name: string | null; avatar_url: string | null }
 type Comment = { id: string; content: string; created_at: string; user_id: string; profiles: Profile | null }
 type Post = {
   id: string; user_id: string; content: string; image_urls: string[]; created_at: string
+  language_tag: string | null
   profiles: Profile | null
   post_likes: { user_id: string }[]
   post_comments: Comment[]
@@ -15,6 +16,12 @@ type Post = {
 
 const AVATAR_COLORS = ['bg-green-400', 'bg-blue-400', 'bg-purple-400', 'bg-yellow-400', 'bg-pink-400', 'bg-teal-400']
 const avatarColor = (uid: string) => AVATAR_COLORS[uid.charCodeAt(0) % AVATAR_COLORS.length]
+
+const LANGUAGES = ['英語', '中国語', '韓国語', 'スペイン語', 'フランス語', 'ドイツ語', 'その他']
+const LANG_FLAGS: Record<string, string> = {
+  '英語': '🇬🇧', '中国語': '🇨🇳', '韓国語': '🇰🇷',
+  'スペイン語': '🇪🇸', 'フランス語': '🇫🇷', 'ドイツ語': '🇩🇪', 'その他': '🌐'
+}
 
 const timeAgo = (ts: string) => {
   const diff = Date.now() - new Date(ts).getTime()
@@ -45,7 +52,9 @@ export default function HomePage() {
   const [userProfile, setUserProfile] = useState<Profile | null>(null)
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set())
   const [tab, setTab] = useState<'all' | 'following'>('all')
+  const [langFilter, setLangFilter] = useState<string | null>(null)
   const [content, setContent] = useState('')
+  const [langTag, setLangTag] = useState<string>('')
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [posting, setPosting] = useState(false)
@@ -83,9 +92,9 @@ export default function HomePage() {
   const loadPosts = async () => {
     const { data } = await supabase
       .from('posts')
-      .select('id, content, image_urls, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
+      .select('id, content, image_urls, language_tag, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
       .order('created_at', { ascending: false })
-      .limit(30)
+      .limit(50)
     if (data) setPosts(data as unknown as Post[])
   }
 
@@ -116,11 +125,11 @@ export default function HomePage() {
     }
     const { data } = await supabase
       .from('posts')
-      .insert({ user_id: userId, content: content.trim(), image_urls: imageUrls })
-      .select('id, content, image_urls, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
+      .insert({ user_id: userId, content: content.trim(), image_urls: imageUrls, language_tag: langTag || null })
+      .select('id, content, image_urls, language_tag, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
       .single()
     if (data) setPosts(prev => [data as unknown as Post, ...prev])
-    setContent(''); removeImage(); setPosting(false)
+    setContent(''); setLangTag(''); removeImage(); setPosting(false)
   }
 
   const toggleLike = async (post: Post) => {
@@ -132,6 +141,10 @@ export default function HomePage() {
     } else {
       await supabase.from('post_likes').insert({ post_id: post.id, user_id: userId })
       setPosts(prev => prev.map(p => p.id === post.id ? { ...p, post_likes: [...p.post_likes, { user_id: userId! }] } : p))
+      // Notification
+      if (post.user_id !== userId) {
+        await supabase.from('notifications').insert({ user_id: post.user_id, from_user_id: userId, type: 'like', post_id: post.id })
+      }
     }
   }
 
@@ -146,6 +159,11 @@ export default function HomePage() {
     if (data) {
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, post_comments: [...p.post_comments, data as unknown as Comment] } : p))
       setCommentTexts(prev => ({ ...prev, [postId]: '' }))
+      // Notification
+      const post = posts.find(p => p.id === postId)
+      if (post && post.user_id !== userId) {
+        await supabase.from('notifications').insert({ user_id: post.user_id, from_user_id: userId, type: 'comment', post_id: postId })
+      }
     }
   }
 
@@ -177,15 +195,37 @@ export default function HomePage() {
     } else {
       await supabase.from('follows').insert({ follower_id: userId, following_id: targetId })
       setFollowingIds(prev => new Set([...prev, targetId]))
+      // Notification
+      await supabase.from('notifications').insert({ user_id: targetId, from_user_id: userId, type: 'follow' })
     }
+  }
+
+  const sendDmRequest = async (targetId: string) => {
+    if (!userId || targetId === userId) return
+    // Check if room already exists
+    const [u1, u2] = [userId, targetId].sort()
+    const { data: existingRoom } = await supabase
+      .from('dm_rooms')
+      .select('id')
+      .eq('user1_id', u1).eq('user2_id', u2)
+      .single()
+    if (existingRoom) { window.location.href = `/dashboard/messages/${existingRoom.id}`; return }
+
+    // Insert DM request (ignore duplicate)
+    await supabase.from('dm_requests').upsert(
+      { from_user_id: userId, to_user_id: targetId, status: 'pending' },
+      { onConflict: 'from_user_id,to_user_id', ignoreDuplicates: true }
+    )
+    alert('DMリクエストを送りました！承認されるとトークが開始されます。')
   }
 
   const toggleExpand = (id: string) =>
     setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
 
-  const displayPosts = tab === 'following'
+  let displayPosts = tab === 'following'
     ? posts.filter(p => followingIds.has(p.user_id) || p.user_id === userId)
     : posts
+  if (langFilter) displayPosts = displayPosts.filter(p => p.language_tag === langFilter)
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-gray-400 text-sm">読み込み中...</p></div>
 
@@ -211,12 +251,18 @@ export default function HomePage() {
           </div>
         )}
         <div className="flex items-center justify-between pt-3 border-t border-gray-50 mt-3">
-          <div>
+          <div className="flex items-center gap-2">
             <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
             <button onClick={() => imageInputRef.current?.click()}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-gray-400 hover:text-[#16A34A] hover:bg-green-50 text-sm transition-colors">
               <span>🖼️</span><span className="text-xs font-semibold">画像</span>
             </button>
+            {/* Language tag selector */}
+            <select value={langTag} onChange={e => setLangTag(e.target.value)}
+              className="text-xs text-gray-500 border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#16A34A] bg-white cursor-pointer">
+              <option value="">🏷️ 言語タグ</option>
+              {LANGUAGES.map(l => <option key={l} value={l}>{LANG_FLAGS[l]} {l}</option>)}
+            </select>
           </div>
           <button onClick={createPost} disabled={!content.trim() || posting}
             className="px-5 py-2 bg-[#16A34A] text-white rounded-xl text-sm font-bold hover:bg-[#166534] disabled:opacity-40 transition-colors">
@@ -225,14 +271,30 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
-        {(['all', 'following'] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-colors ${tab === t ? 'bg-white text-[#16A34A] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-            {t === 'all' ? 'みんな' : 'フォロー中'}
+      {/* Tabs + Language Filter */}
+      <div className="space-y-2">
+        <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+          {(['all', 'following'] as const).map(t => (
+            <button key={t} onClick={() => setTab(t)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-colors ${tab === t ? 'bg-white text-[#16A34A] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+              {t === 'all' ? 'みんな' : 'フォロー中'}
+            </button>
+          ))}
+        </div>
+
+        {/* Language filter chips */}
+        <div className="flex gap-1.5 flex-wrap">
+          <button onClick={() => setLangFilter(null)}
+            className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${!langFilter ? 'bg-[#16A34A] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+            すべて
           </button>
-        ))}
+          {LANGUAGES.map(l => (
+            <button key={l} onClick={() => setLangFilter(langFilter === l ? null : l)}
+              className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${langFilter === l ? 'bg-[#16A34A] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+              {LANG_FLAGS[l]} {l}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Feed */}
@@ -261,19 +323,29 @@ export default function HomePage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="font-bold text-gray-800 text-sm leading-none">{name}</p>
                     {!isOwn && (
-                      <button onClick={() => toggleFollow(post.user_id)}
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
-                          isFollowing
-                            ? 'border-gray-200 text-gray-400 hover:border-red-200 hover:text-red-400'
-                            : 'border-[#16A34A] text-[#16A34A] hover:bg-[#16A34A] hover:text-white'
-                        }`}>
-                        {isFollowing ? 'フォロー中' : 'フォロー'}
-                      </button>
+                      <>
+                        <button onClick={() => toggleFollow(post.user_id)}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
+                            isFollowing
+                              ? 'border-gray-200 text-gray-400 hover:border-red-200 hover:text-red-400'
+                              : 'border-[#16A34A] text-[#16A34A] hover:bg-[#16A34A] hover:text-white'
+                          }`}>
+                          {isFollowing ? 'フォロー中' : 'フォロー'}
+                        </button>
+                        <button onClick={() => sendDmRequest(post.user_id)}
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-full border border-gray-200 text-gray-400 hover:border-blue-300 hover:text-blue-400 transition-colors">
+                          💬 DM
+                        </button>
+                      </>
+                    )}
+                    {post.language_tag && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-50 text-[#16A34A] border border-green-100">
+                        {LANG_FLAGS[post.language_tag]} {post.language_tag}
+                      </span>
                     )}
                   </div>
                   <p className="text-[11px] text-gray-400 mt-0.5">{timeAgo(post.created_at)}</p>
                 </div>
-                {/* Menu (own posts only) */}
                 {isOwn && (
                   <div className="relative shrink-0">
                     <button
