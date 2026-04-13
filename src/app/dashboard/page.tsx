@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
@@ -31,15 +31,28 @@ const timeAgo = (ts: string) => {
   return `${dt.getMonth() + 1}/${dt.getDate()}`
 }
 
+const Avatar = ({ uid, name, avatarUrl, size = 9 }: { uid: string; name: string; avatarUrl?: string | null; size?: number }) => {
+  const sz = `w-${size} h-${size}`
+  if (avatarUrl) return <img src={avatarUrl} alt={name} className={`${sz} rounded-full object-cover shrink-0`} />
+  return (
+    <div className={`${sz} rounded-full flex items-center justify-center text-white font-bold shrink-0 text-sm ${avatarColor(uid)}`}>
+      {name[0].toUpperCase()}
+    </div>
+  )
+}
+
 export default function HomePage() {
   const [posts, setPosts] = useState<Post[]>([])
   const [userId, setUserId] = useState<string | null>(null)
-  const [userName, setUserName] = useState<string | null>(null)
+  const [userProfile, setUserProfile] = useState<Profile | null>(null)
   const [content, setContent] = useState('')
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [posting, setPosting] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [commentTexts, setCommentTexts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
+  const imageInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
 
@@ -48,8 +61,8 @@ export default function HomePage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/auth/login'); return }
       setUserId(user.id)
-      const { data: p } = await supabase.from('profiles').select('name').eq('id', user.id).single()
-      setUserName(p?.name || null)
+      const { data: p } = await supabase.from('profiles').select('name, avatar_url').eq('id', user.id).single()
+      setUserProfile(p)
       await loadPosts()
       setLoading(false)
     }
@@ -62,19 +75,45 @@ export default function HomePage() {
       .select('id, content, image_urls, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
       .order('created_at', { ascending: false })
       .limit(30)
-    if (data) setPosts(data as any)
+    if (data) setPosts(data as unknown as Post[])
+  }
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImageFile(file)
+    setImagePreview(URL.createObjectURL(file))
+  }
+
+  const removeImage = () => {
+    setImageFile(null)
+    setImagePreview(null)
+    if (imageInputRef.current) imageInputRef.current.value = ''
   }
 
   const createPost = async () => {
     if (!content.trim() || !userId || posting) return
     setPosting(true)
+
+    let imageUrls: string[] = []
+    if (imageFile) {
+      const ext = imageFile.name.split('.').pop()
+      const path = `${userId}/${Date.now()}.${ext}`
+      const { error } = await supabase.storage.from('post-images').upload(path, imageFile)
+      if (!error) {
+        const { data: { publicUrl } } = supabase.storage.from('post-images').getPublicUrl(path)
+        imageUrls = [publicUrl]
+      }
+    }
+
     const { data } = await supabase
       .from('posts')
-      .insert({ user_id: userId, content: content.trim() })
+      .insert({ user_id: userId, content: content.trim(), image_urls: imageUrls })
       .select('id, content, image_urls, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
       .single()
-    if (data) setPosts(prev => [data as any, ...prev])
+    if (data) setPosts(prev => [data as unknown as Post, ...prev])
     setContent('')
+    removeImage()
     setPosting(false)
   }
 
@@ -99,7 +138,7 @@ export default function HomePage() {
       .select('id, content, created_at, user_id, profiles(name, avatar_url)')
       .single()
     if (data) {
-      setPosts(prev => prev.map(p => p.id === postId ? { ...p, post_comments: [...p.post_comments, data as any] } : p))
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, post_comments: [...p.post_comments, data as unknown as Comment] } : p))
       setCommentTexts(prev => ({ ...prev, [postId]: '' }))
     }
   }
@@ -115,9 +154,7 @@ export default function HomePage() {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
         <div className="flex gap-3">
           {userId && (
-            <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0 ${avatarColor(userId)}`}>
-              {(userName || 'U')[0].toUpperCase()}
-            </div>
+            <Avatar uid={userId} name={userProfile?.name || 'U'} avatarUrl={userProfile?.avatar_url} />
           )}
           <textarea
             value={content}
@@ -128,7 +165,26 @@ export default function HomePage() {
             className="flex-1 text-sm text-gray-800 placeholder-gray-400 resize-none outline-none leading-relaxed"
           />
         </div>
-        <div className="flex items-center justify-end pt-3 border-t border-gray-50 mt-3">
+
+        {/* Image preview */}
+        {imagePreview && (
+          <div className="relative mt-3 rounded-xl overflow-hidden">
+            <img src={imagePreview} alt="preview" className="w-full max-h-64 object-cover rounded-xl" />
+            <button onClick={removeImage}
+              className="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-black/70 text-white rounded-full flex items-center justify-center text-sm transition-colors">
+              ✕
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between pt-3 border-t border-gray-50 mt-3">
+          <div className="flex items-center gap-2">
+            <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+            <button onClick={() => imageInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-gray-400 hover:text-[#16A34A] hover:bg-green-50 text-sm transition-colors">
+              <span>🖼️</span><span className="text-xs font-semibold">画像</span>
+            </button>
+          </div>
           <button onClick={createPost} disabled={!content.trim() || posting}
             className="px-5 py-2 bg-[#16A34A] text-white rounded-xl text-sm font-bold hover:bg-[#166534] disabled:opacity-40 transition-colors">
             {posting ? '投稿中...' : '投稿する'}
@@ -152,9 +208,7 @@ export default function HomePage() {
             <div className="p-5">
               {/* Header */}
               <div className="flex items-center gap-3 mb-4">
-                <div className={`w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0 ${avatarColor(post.user_id)}`}>
-                  {name[0].toUpperCase()}
-                </div>
+                <Avatar uid={post.user_id} name={name} avatarUrl={post.profiles?.avatar_url} />
                 <div>
                   <p className="font-bold text-gray-800 text-sm leading-none">{name}</p>
                   <p className="text-[11px] text-gray-400 mt-0.5">{timeAgo(post.created_at)}</p>
@@ -163,6 +217,13 @@ export default function HomePage() {
 
               {/* Content */}
               <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{post.content}</p>
+
+              {/* Image */}
+              {post.image_urls?.length > 0 && (
+                <div className="mt-3 rounded-xl overflow-hidden">
+                  <img src={post.image_urls[0]} alt="post" className="w-full object-cover max-h-80 rounded-xl" />
+                </div>
+              )}
 
               {/* Actions */}
               <div className="flex items-center gap-5 pt-4 mt-4 border-t border-gray-50">
@@ -184,9 +245,7 @@ export default function HomePage() {
               <div className="border-t border-gray-50 px-5 py-4 bg-gray-50/50 rounded-b-2xl space-y-3">
                 {post.post_comments.map(c => (
                   <div key={c.id} className="flex gap-2.5">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${avatarColor(c.user_id)}`}>
-                      {(c.profiles?.name || 'U')[0].toUpperCase()}
-                    </div>
+                    <Avatar uid={c.user_id} name={c.profiles?.name || 'U'} avatarUrl={c.profiles?.avatar_url} size={7} />
                     <div className="flex-1 bg-white rounded-xl px-3 py-2 border border-gray-100">
                       <p className="text-xs font-bold text-gray-700">{c.profiles?.name || 'ユーザー'}</p>
                       <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">{c.content}</p>
@@ -194,11 +253,7 @@ export default function HomePage() {
                   </div>
                 ))}
                 <div className="flex gap-2.5">
-                  {userId && (
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 ${avatarColor(userId)}`}>
-                      {(userName || 'U')[0].toUpperCase()}
-                    </div>
-                  )}
+                  {userId && <Avatar uid={userId} name={userProfile?.name || 'U'} avatarUrl={userProfile?.avatar_url} size={7} />}
                   <div className="flex-1 flex gap-2">
                     <input
                       value={commentTexts[post.id] || ''}

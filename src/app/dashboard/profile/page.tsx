@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -12,10 +12,10 @@ const LANGUAGE_FLAGS: Record<string, string> = {
 }
 const LANGUAGES = Object.keys(LANGUAGE_FLAGS)
 const LEVELS = [
-  { value: 'beginner', label: '初級', desc: '簡単な会話' },
-  { value: 'intermediate', label: '中級', desc: '日常会話OK' },
-  { value: 'advanced', label: '上級', desc: 'ビジネス' },
-  { value: 'native', label: 'ネイティブ', desc: '母語' },
+  { value: 'beginner', label: '初級' },
+  { value: 'intermediate', label: '中級' },
+  { value: 'advanced', label: '上級' },
+  { value: 'native', label: 'ネイティブ' },
 ]
 const LEVEL_LABEL: Record<string, string> = {
   beginner: '初級', intermediate: '中級', advanced: '上級', native: 'ネイティブ'
@@ -29,14 +29,18 @@ export default function ProfilePage() {
   const [nativeLang, setNativeLang] = useState('日本語')
   const [skills, setSkills] = useState<Skill[]>([])
   const [email, setEmail] = useState('')
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [joinYear, setJoinYear] = useState(new Date().getFullYear())
+  const [userId, setUserId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [eName, setEName] = useState('')
   const [eBio, setEBio] = useState('')
   const [eNative, setENative] = useState('日本語')
   const [eSkills, setESkills] = useState<Skill[]>([])
+  const avatarInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
   const router = useRouter()
 
@@ -45,14 +49,36 @@ export default function ProfilePage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/auth/login'); return }
       setEmail(user.email || '')
+      setUserId(user.id)
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       const { data: s } = await supabase.from('user_skills').select('*').eq('user_id', user.id)
-      if (p) { setName(p.name || ''); setBio(p.bio || ''); setNativeLang(p.native_language || '日本語'); if (p.created_at) setJoinYear(new Date(p.created_at).getFullYear()) }
+      if (p) {
+        setName(p.name || '')
+        setBio(p.bio || '')
+        setNativeLang(p.native_language || '日本語')
+        setAvatarUrl(p.avatar_url || null)
+        if (p.created_at) setJoinYear(new Date(p.created_at).getFullYear())
+      }
       if (s) setSkills(s.map((x: any) => ({ language: x.language, level: x.level })))
       setLoading(false)
     }
     load()
   }, [])
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !userId) return
+    setUploadingAvatar(true)
+    const ext = file.name.split('.').pop()
+    const path = `${userId}/avatar.${ext}`
+    const { error } = await supabase.storage.from('avatars').upload(path, file, { upsert: true })
+    if (!error) {
+      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path)
+      await supabase.from('profiles').upsert({ id: userId, avatar_url: publicUrl, updated_at: new Date().toISOString() })
+      setAvatarUrl(publicUrl + '?t=' + Date.now())
+    }
+    setUploadingAvatar(false)
+  }
 
   const startEdit = () => { setEName(name); setEBio(bio); setENative(nativeLang); setESkills([...skills]); setEditing(true) }
 
@@ -87,10 +113,28 @@ export default function ProfilePage() {
               <button onClick={startEdit}
                 className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/60 hover:bg-white flex items-center justify-center text-gray-500 text-sm transition-colors"
                 title="編集">✏️</button>
-              <div className="w-20 h-20 rounded-full border-[3px] border-dashed border-[#16A34A]/50 bg-[#A7F3D0]/60 flex items-center justify-center">
-                <span className="text-[#16A34A]/40 text-3xl leading-none">＋</span>
-              </div>
+
+              {/* Avatar with upload */}
+              <input ref={avatarInputRef} type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                disabled={uploadingAvatar}
+                className="relative w-20 h-20 rounded-full overflow-hidden border-[3px] border-white shadow-md group"
+                title="写真を変更"
+              >
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="avatar" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-[#A7F3D0]/60 flex items-center justify-center">
+                    <span className="text-[#16A34A]/40 text-3xl leading-none">＋</span>
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <span className="text-white text-xs font-bold">{uploadingAvatar ? '...' : '変更'}</span>
+                </div>
+              </button>
             </div>
+
             <div className="px-5 -mt-5 pb-5">
               <div className="bg-white rounded-xl pt-3">
                 <h1 className="text-lg font-black text-gray-900">{displayName}</h1>
