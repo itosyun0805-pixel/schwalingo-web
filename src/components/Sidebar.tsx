@@ -103,7 +103,7 @@ export default function Sidebar() {
   )
 
   return (
-    <aside className="w-52 bg-[#1E3A2A] flex flex-col shrink-0 h-screen sticky top-0">
+    <aside className="w-52 bg-[#1E3A2A] hidden md:flex flex-col shrink-0 h-screen sticky top-0">
       <div className="px-4 py-3.5 border-b border-white/10 flex items-center justify-between hover:bg-white/5 cursor-pointer">
         <span className="text-white font-black text-base">SchwaLingo</span>
         <span className="text-white/30 text-xs">▾</span>
