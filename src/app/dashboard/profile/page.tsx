@@ -32,6 +32,8 @@ export default function ProfilePage() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [joinYear, setJoinYear] = useState(new Date().getFullYear())
   const [userId, setUserId] = useState<string | null>(null)
+  const [followingCount, setFollowingCount] = useState(0)
+  const [followersCount, setFollowersCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -50,8 +52,14 @@ export default function ProfilePage() {
       if (!user) { router.push('/auth/login'); return }
       setEmail(user.email || '')
       setUserId(user.id)
-      const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-      const { data: s } = await supabase.from('user_skills').select('*').eq('user_id', user.id)
+      const [{ data: p }, { data: s }, { count: fing }, { count: fers }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', user.id).single(),
+        supabase.from('user_skills').select('*').eq('user_id', user.id),
+        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_id', user.id),
+        supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_id', user.id),
+      ])
+      setFollowingCount(fing || 0)
+      setFollowersCount(fers || 0)
       if (p) {
         setName(p.name || '')
         setBio(p.bio || '')
@@ -61,6 +69,7 @@ export default function ProfilePage() {
       }
       if (s) setSkills(s.map((x: any) => ({ language: x.language, level: x.level })))
       setLoading(false)
+
     }
     load()
   }, [])
@@ -149,8 +158,8 @@ export default function ProfilePage() {
                   </div>
                   <span className="text-[10px] text-gray-400">Courses</span>
                 </div>
-                <div className="flex flex-col items-center gap-1"><span className="font-black text-gray-800">0</span><span className="text-[10px] text-gray-400">Following</span></div>
-                <div className="flex flex-col items-center gap-1"><span className="font-black text-gray-800">0</span><span className="text-[10px] text-gray-400">Followers</span></div>
+                <div className="flex flex-col items-center gap-1"><span className="font-black text-gray-800">{followingCount}</span><span className="text-[10px] text-gray-400">Following</span></div>
+                <div className="flex flex-col items-center gap-1"><span className="font-black text-gray-800">{followersCount}</span><span className="text-[10px] text-gray-400">Followers</span></div>
               </div>
               <button onClick={startEdit}
                 className="mt-4 w-full py-2 border-2 border-gray-200 rounded-xl text-sm font-bold text-gray-600 hover:border-[#16A34A] hover:text-[#16A34A] transition-colors">

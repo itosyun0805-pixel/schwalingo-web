@@ -13,10 +13,8 @@ type Post = {
   post_comments: Comment[]
 }
 
-const avatarColor = (uid: string) => {
-  const colors = ['bg-green-400', 'bg-blue-400', 'bg-purple-400', 'bg-yellow-400', 'bg-pink-400', 'bg-teal-400']
-  return colors[uid.charCodeAt(0) % colors.length]
-}
+const AVATAR_COLORS = ['bg-green-400', 'bg-blue-400', 'bg-purple-400', 'bg-yellow-400', 'bg-pink-400', 'bg-teal-400']
+const avatarColor = (uid: string) => AVATAR_COLORS[uid.charCodeAt(0) % AVATAR_COLORS.length]
 
 const timeAgo = (ts: string) => {
   const diff = Date.now() - new Date(ts).getTime()
@@ -36,7 +34,7 @@ const Avatar = ({ uid, name, avatarUrl, size = 9 }: { uid: string; name: string;
   if (avatarUrl) return <img src={avatarUrl} alt={name} className={`${sz} rounded-full object-cover shrink-0`} />
   return (
     <div className={`${sz} rounded-full flex items-center justify-center text-white font-bold shrink-0 text-sm ${avatarColor(uid)}`}>
-      {name[0].toUpperCase()}
+      {(name || 'U')[0].toUpperCase()}
     </div>
   )
 }
@@ -45,12 +43,18 @@ export default function HomePage() {
   const [posts, setPosts] = useState<Post[]>([])
   const [userId, setUserId] = useState<string | null>(null)
   const [userProfile, setUserProfile] = useState<Profile | null>(null)
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set())
+  const [tab, setTab] = useState<'all' | 'following'>('all')
   const [content, setContent] = useState('')
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [posting, setPosting] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [commentTexts, setCommentTexts] = useState<Record<string, string>>({})
+  const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editContent, setEditContent] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const supabase = createClient()
@@ -61,12 +65,19 @@ export default function HomePage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/auth/login'); return }
       setUserId(user.id)
-      const { data: p } = await supabase.from('profiles').select('name, avatar_url').eq('id', user.id).single()
+      const [{ data: p }, { data: follows }] = await Promise.all([
+        supabase.from('profiles').select('name, avatar_url').eq('id', user.id).single(),
+        supabase.from('follows').select('following_id').eq('follower_id', user.id),
+      ])
       setUserProfile(p)
+      setFollowingIds(new Set((follows || []).map((f: any) => f.following_id)))
       await loadPosts()
       setLoading(false)
     }
     init()
+    const handleClick = () => setMenuOpen(null)
+    window.addEventListener('click', handleClick)
+    return () => window.removeEventListener('click', handleClick)
   }, [])
 
   const loadPosts = async () => {
@@ -86,15 +97,13 @@ export default function HomePage() {
   }
 
   const removeImage = () => {
-    setImageFile(null)
-    setImagePreview(null)
+    setImageFile(null); setImagePreview(null)
     if (imageInputRef.current) imageInputRef.current.value = ''
   }
 
   const createPost = async () => {
     if (!content.trim() || !userId || posting) return
     setPosting(true)
-
     let imageUrls: string[] = []
     if (imageFile) {
       const ext = imageFile.name.split('.').pop()
@@ -105,16 +114,13 @@ export default function HomePage() {
         imageUrls = [publicUrl]
       }
     }
-
     const { data } = await supabase
       .from('posts')
       .insert({ user_id: userId, content: content.trim(), image_urls: imageUrls })
       .select('id, content, image_urls, created_at, user_id, profiles(name, avatar_url), post_likes(user_id), post_comments(id, content, created_at, user_id, profiles(name, avatar_url))')
       .single()
     if (data) setPosts(prev => [data as unknown as Post, ...prev])
-    setContent('')
-    removeImage()
-    setPosting(false)
+    setContent(''); removeImage(); setPosting(false)
   }
 
   const toggleLike = async (post: Post) => {
@@ -143,8 +149,43 @@ export default function HomePage() {
     }
   }
 
+  const startEdit = (post: Post) => {
+    setEditingId(post.id); setEditContent(post.content); setMenuOpen(null)
+  }
+
+  const saveEdit = async () => {
+    if (!editingId || !editContent.trim()) return
+    setEditSaving(true)
+    await supabase.from('posts').update({ content: editContent.trim() }).eq('id', editingId)
+    setPosts(prev => prev.map(p => p.id === editingId ? { ...p, content: editContent.trim() } : p))
+    setEditingId(null); setEditSaving(false)
+  }
+
+  const deletePost = async (postId: string) => {
+    if (!confirm('この投稿を削除しますか？')) return
+    await supabase.from('posts').delete().eq('id', postId)
+    setPosts(prev => prev.filter(p => p.id !== postId))
+    setMenuOpen(null)
+  }
+
+  const toggleFollow = async (targetId: string) => {
+    if (!userId || targetId === userId) return
+    const isFollowing = followingIds.has(targetId)
+    if (isFollowing) {
+      await supabase.from('follows').delete().eq('follower_id', userId).eq('following_id', targetId)
+      setFollowingIds(prev => { const n = new Set(prev); n.delete(targetId); return n })
+    } else {
+      await supabase.from('follows').insert({ follower_id: userId, following_id: targetId })
+      setFollowingIds(prev => new Set([...prev, targetId]))
+    }
+  }
+
   const toggleExpand = (id: string) =>
     setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  const displayPosts = tab === 'following'
+    ? posts.filter(p => followingIds.has(p.user_id) || p.user_id === userId)
+    : posts
 
   if (loading) return <div className="flex items-center justify-center h-64"><p className="text-gray-400 text-sm">読み込み中...</p></div>
 
@@ -153,9 +194,7 @@ export default function HomePage() {
       {/* Create Post */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
         <div className="flex gap-3">
-          {userId && (
-            <Avatar uid={userId} name={userProfile?.name || 'U'} avatarUrl={userProfile?.avatar_url} />
-          )}
+          {userId && <Avatar uid={userId} name={userProfile?.name || 'U'} avatarUrl={userProfile?.avatar_url} />}
           <textarea
             value={content}
             onChange={e => setContent(e.target.value)}
@@ -165,20 +204,14 @@ export default function HomePage() {
             className="flex-1 text-sm text-gray-800 placeholder-gray-400 resize-none outline-none leading-relaxed"
           />
         </div>
-
-        {/* Image preview */}
         {imagePreview && (
           <div className="relative mt-3 rounded-xl overflow-hidden">
             <img src={imagePreview} alt="preview" className="w-full max-h-64 object-cover rounded-xl" />
-            <button onClick={removeImage}
-              className="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-black/70 text-white rounded-full flex items-center justify-center text-sm transition-colors">
-              ✕
-            </button>
+            <button onClick={removeImage} className="absolute top-2 right-2 w-7 h-7 bg-black/50 hover:bg-black/70 text-white rounded-full flex items-center justify-center text-sm">✕</button>
           </div>
         )}
-
         <div className="flex items-center justify-between pt-3 border-t border-gray-50 mt-3">
-          <div className="flex items-center gap-2">
+          <div>
             <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
             <button onClick={() => imageInputRef.current?.click()}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-gray-400 hover:text-[#16A34A] hover:bg-green-50 text-sm transition-colors">
@@ -192,16 +225,31 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {(['all', 'following'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-colors ${tab === t ? 'bg-white text-[#16A34A] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+            {t === 'all' ? 'みんな' : 'フォロー中'}
+          </button>
+        ))}
+      </div>
+
       {/* Feed */}
-      {posts.length === 0 ? (
+      {displayPosts.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
-          <p className="text-4xl mb-3">✍️</p>
-          <p className="text-sm">まだ投稿がありません。最初の投稿をしてみましょう！</p>
+          <p className="text-4xl mb-3">{tab === 'following' ? '👥' : '✍️'}</p>
+          <p className="text-sm">
+            {tab === 'following' ? 'フォロー中のユーザーの投稿がここに表示されます' : 'まだ投稿がありません。最初の投稿をしてみましょう！'}
+          </p>
         </div>
-      ) : posts.map(post => {
+      ) : displayPosts.map(post => {
         const name = post.profiles?.name || 'ユーザー'
         const liked = post.post_likes.some(l => l.user_id === userId)
         const open = expanded.has(post.id)
+        const isOwn = post.user_id === userId
+        const isFollowing = followingIds.has(post.user_id)
+        const isEditing = editingId === post.id
 
         return (
           <div key={post.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm">
@@ -209,39 +257,98 @@ export default function HomePage() {
               {/* Header */}
               <div className="flex items-center gap-3 mb-4">
                 <Avatar uid={post.user_id} name={name} avatarUrl={post.profiles?.avatar_url} />
-                <div>
-                  <p className="font-bold text-gray-800 text-sm leading-none">{name}</p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-bold text-gray-800 text-sm leading-none">{name}</p>
+                    {!isOwn && (
+                      <button onClick={() => toggleFollow(post.user_id)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
+                          isFollowing
+                            ? 'border-gray-200 text-gray-400 hover:border-red-200 hover:text-red-400'
+                            : 'border-[#16A34A] text-[#16A34A] hover:bg-[#16A34A] hover:text-white'
+                        }`}>
+                        {isFollowing ? 'フォロー中' : 'フォロー'}
+                      </button>
+                    )}
+                  </div>
                   <p className="text-[11px] text-gray-400 mt-0.5">{timeAgo(post.created_at)}</p>
                 </div>
+                {/* Menu (own posts only) */}
+                {isOwn && (
+                  <div className="relative shrink-0">
+                    <button
+                      onClick={e => { e.stopPropagation(); setMenuOpen(menuOpen === post.id ? null : post.id) }}
+                      className="w-7 h-7 rounded-full hover:bg-gray-100 flex items-center justify-center text-gray-400 transition-colors">
+                      ···
+                    </button>
+                    {menuOpen === post.id && (
+                      <div onClick={e => e.stopPropagation()}
+                        className="absolute right-0 top-8 bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden z-10 min-w-[100px]">
+                        <button onClick={() => startEdit(post)}
+                          className="w-full px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 transition-colors">
+                          ✏️ 編集
+                        </button>
+                        <button onClick={() => deletePost(post.id)}
+                          className="w-full px-4 py-2.5 text-left text-sm text-red-500 hover:bg-red-50 transition-colors">
+                          🗑️ 削除
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* Content */}
-              <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{post.content}</p>
+              {/* Content / Edit mode */}
+              {isEditing ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={editContent}
+                    onChange={e => setEditContent(e.target.value)}
+                    rows={4}
+                    className="w-full text-sm text-gray-800 border border-gray-200 rounded-xl px-3 py-2.5 outline-none focus:border-[#16A34A] resize-none transition-colors"
+                    autoFocus
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setEditingId(null)}
+                      className="px-4 py-1.5 text-sm font-bold text-gray-400 hover:text-gray-600 transition-colors">
+                      キャンセル
+                    </button>
+                    <button onClick={saveEdit} disabled={editSaving || !editContent.trim()}
+                      className="px-4 py-1.5 bg-[#16A34A] text-white rounded-xl text-sm font-bold hover:bg-[#166534] disabled:opacity-40 transition-colors">
+                      {editSaving ? '保存中...' : '保存'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{post.content}</p>
+              )}
 
               {/* Image */}
-              {post.image_urls?.length > 0 && (
+              {!isEditing && post.image_urls?.length > 0 && (
                 <div className="mt-3 rounded-xl overflow-hidden">
                   <img src={post.image_urls[0]} alt="post" className="w-full object-cover max-h-80 rounded-xl" />
                 </div>
               )}
 
               {/* Actions */}
-              <div className="flex items-center gap-5 pt-4 mt-4 border-t border-gray-50">
-                <button onClick={() => toggleLike(post)}
-                  className={`flex items-center gap-1.5 text-sm font-semibold transition-colors ${liked ? 'text-[#16A34A]' : 'text-gray-400 hover:text-[#16A34A]'}`}>
-                  <span className="text-base">{liked ? '❤️' : '🤍'}</span>
-                  <span>{post.post_likes.length}</span>
-                </button>
-                <button onClick={() => toggleExpand(post.id)}
-                  className="flex items-center gap-1.5 text-sm font-semibold text-gray-400 hover:text-gray-600 transition-colors">
-                  <span className="text-base">💬</span>
-                  <span>{post.post_comments.length}</span>
-                </button>
-              </div>
+              {!isEditing && (
+                <div className="flex items-center gap-5 pt-4 mt-4 border-t border-gray-50">
+                  <button onClick={() => toggleLike(post)}
+                    className={`flex items-center gap-1.5 text-sm font-semibold transition-colors ${liked ? 'text-[#16A34A]' : 'text-gray-400 hover:text-[#16A34A]'}`}>
+                    <span className="text-base">{liked ? '❤️' : '🤍'}</span>
+                    <span>{post.post_likes.length}</span>
+                  </button>
+                  <button onClick={() => toggleExpand(post.id)}
+                    className="flex items-center gap-1.5 text-sm font-semibold text-gray-400 hover:text-gray-600 transition-colors">
+                    <span className="text-base">💬</span>
+                    <span>{post.post_comments.length}</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Comments */}
-            {open && (
+            {open && !isEditing && (
               <div className="border-t border-gray-50 px-5 py-4 bg-gray-50/50 rounded-b-2xl space-y-3">
                 {post.post_comments.map(c => (
                   <div key={c.id} className="flex gap-2.5">
