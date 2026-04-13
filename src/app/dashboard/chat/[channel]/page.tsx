@@ -42,7 +42,7 @@ export default function ChannelPage() {
         .eq('channel_id', channel.id)
         .order('created_at', { ascending: true })
         .limit(100)
-      if (msgs) setMessages(msgs as Message[])
+      if (msgs) setMessages(msgs as unknown as Message[])
 
       rt = supabase
         .channel(`room-${channel.id}`)
@@ -54,7 +54,7 @@ export default function ChannelPage() {
             .from('messages')
             .select('id, content, created_at, user_id, profiles(name)')
             .eq('id', payload.new.id).single()
-          if (data) setMessages(prev => [...prev, data as Message])
+          if (data) setMessages(prev => [...prev, data as unknown as Message])
         })
         .subscribe()
     }
